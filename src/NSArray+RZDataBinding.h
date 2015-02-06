@@ -27,7 +27,7 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-@import Foundation;
+#import <Foundation/Foundation.h>
 
 typedef NS_ENUM(NSUInteger, RZDBArrayMutationType) {
     kRZDBArrayMutationTypeUnknown   = 0,
@@ -57,9 +57,7 @@ typedef NS_ENUM(NSUInteger, RZDBArrayMutationType) {
 - (void)rz_addObserver:(id<RZDBArrayObserver>)observer;
 - (void)rz_removeObserver:(id<RZDBArrayObserver>)observer;
 
-- (void)rz_registerForObjectUpdateNotificationsNamed:(NSArray *)names;
-- (void)rz_unregisterForObjectUpdateNotificationsNamed:(NSArray *)names;
-- (void)rz_unregisterForAllObjectUpdateNotifications;
+- (void)rz_sendUpdateNotificationForObject:(id)object;
 
 - (void)rz_beginBatchUpdates;
 - (void)rz_endBatchUpdates:(BOOL)force;
