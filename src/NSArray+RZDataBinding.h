@@ -29,23 +29,17 @@
 
 #import <Foundation/Foundation.h>
 
-typedef NS_ENUM(NSUInteger, RZDBArrayMutationType) {
-    kRZDBArrayMutationTypeUnknown   = 0,
-    kRZDBArrayMutationTypeRemove,
-    kRZDBArrayMutationTypeInsert,
-    kRZDBArrayMutationTypeMove, // only used internally
-    kRZDBArrayMutationTypeUpdate
-};
-
 @protocol RZDBArrayObserver <NSObject>
 
-@required
-- (void)array:(NSArray *)array didChangeContents:(RZDBArrayMutationType)mutationType atIndexes:(NSIndexSet *)indexes;
-- (void)array:(NSArray *)array didMoveObjectAtIndex:(NSUInteger)oldIndex toIndex:(NSUInteger)newIndex;
-
 @optional
-- (void)array:(NSArray *)array willChangeContents:(RZDBArrayMutationType)mutationType atIndexes:(NSIndexSet *)indexes;
+- (void)array:(NSArray *)array willRemoveObjectsAtIndexes:(NSIndexSet *)indexes;
+- (void)array:(NSArray *)array willInsertObjects:(NSArray *)objects atIndexes:(NSIndexSet *)indexes;
 - (void)array:(NSArray *)array willMoveObjectAtIndex:(NSUInteger)oldIndex toIndex:(NSUInteger)newIndex;
+
+- (void)array:(NSArray *)array didRemoveObjects:(NSArray *)objects atIndexes:(NSIndexSet *)indexes;
+- (void)array:(NSArray *)array didInsertObjectsAtIndexes:(NSIndexSet *)indexes;
+- (void)array:(NSArray *)array didMoveObjectAtIndex:(NSUInteger)oldIndex toIndex:(NSUInteger)newIndex;
+- (void)array:(NSArray *)array didUpdateObjectsAtIndexes:(NSIndexSet *)indexes;
 
 - (void)arrayWillBeginBatchUpdates:(NSArray *)array;
 - (void)arrayDidEndBatchUpdates:(NSArray *)array;
