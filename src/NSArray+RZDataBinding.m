@@ -561,8 +561,12 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
 
     [self _rz_notifyObserversOfMutation:kRZDBArrayMutationTypeRemove indexes:indexes prior:YES];
 
+    __block NSUInteger numRemoved = 0;
+
     [indexes enumerateRangesUsingBlock:^(NSRange range, BOOL *stop) {
+        range.location -= numRemoved;
         [self _rz_removeObjectsInRangeSilently:range];
+        numRemoved = range.length;
     }];
 
     [self _rz_notifyObserversOfMutation:kRZDBArrayMutationTypeRemove indexes:indexes prior:NO];
