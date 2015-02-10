@@ -183,7 +183,7 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
         pendingNotifications[@(kRZDBArrayMutationTypeMove)] = [NSMutableIndexSet indexSet];
         pendingNotifications[@(kRZDBArrayMutationTypeRemove)] = [NSMutableIndexSet indexSet];
         
-        [self _rz_setPreBatchObjects:[self copy]];
+        [self _rz_setPreBatchObjects:self];
         [self _rz_setPendingNotifications:pendingNotifications];
         
         [self _rz_notifyObserversOfBatchUpdate:YES];
@@ -272,7 +272,7 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
 
 - (void)_rz_setPreBatchObjects:(NSArray *)preBatchObjects
 {
-    objc_setAssociatedObject(self, @selector(_rz_preBatchObjects), preBatchObjects, OBJC_ASSOCIATION_RETAIN);
+    objc_setAssociatedObject(self, @selector(_rz_preBatchObjects), preBatchObjects, OBJC_ASSOCIATION_COPY);
 }
 
 - (NSArray *)_rz_pendingInsertedObjects
