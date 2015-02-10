@@ -556,7 +556,7 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
     BOOL batchUpdating = [self _rz_isBatchUpdating];
 
     if ( !batchUpdating ) {
-        [self _rz_setPreBatchObjects:[self objectsAtIndexes:indexes]];
+        [self _rz_setPreBatchObjects:self];
     }
 
     [self _rz_notifyObserversOfMutation:kRZDBArrayMutationTypeRemove indexes:indexes prior:YES];
@@ -583,7 +583,7 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
     BOOL batchUpdating = [self _rz_isBatchUpdating];
 
     if ( !batchUpdating ) {
-        [self _rz_setPreBatchObjects:[self objectsAtIndexes:indexes]];
+        [self _rz_setPreBatchObjects:self];
     }
 
     [self _rz_notifyObserversOfMutation:kRZDBArrayMutationTypeRemove indexes:indexes prior:YES];
