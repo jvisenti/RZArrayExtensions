@@ -30,7 +30,10 @@
 @import ObjectiveC.runtime;
 @import ObjectiveC.message;
 
+#import "NSObject+RZDataBinding.h"
 #import "NSArray+RZDataBinding.h"
+
+NSString* const kRZDBObjectUpdateKey = @"RZDBObjectUpdate";
 
 typedef NS_ENUM(NSUInteger, RZDBArrayMutationType) {
     kRZDBArrayMutationTypeUnknown   = 0,
@@ -110,6 +113,8 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
 - (NSArray *)_rz_pendingInsertedObjects;
 - (void)_rz_setPendingInsertedObjects:(NSArray *)pendingInsertedObjects;
 
+- (void)_rz_objectUpdated:(NSDictionary *)change;
+
 - (BOOL)_rz_isBatchUpdating;
 - (void)_rz_pushBatchUpdate;
 - (void)_rz_popBatchUpdateForce:(BOOL)force;
@@ -141,6 +146,12 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
     NSUInteger obsIdx = [[observers allObjects] indexOfObjectIdenticalTo:observer];
     
     if ( obsIdx == NSNotFound ) {
+        if ( [observers count] == 0 ) {
+            [self enumerateObjectsUsingBlock:^(id obj, NSUInteger idx, BOOL *stop) {
+                [obj rz_addTarget:self action:@selector(_rz_objectUpdated:) forKeyPathChange:kRZDBObjectUpdateKey];
+            }];
+        }
+
         [observers addPointer:(__bridge void *)(observer)];
     }
 }
@@ -153,6 +164,12 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
     NSUInteger obsIdx = [[observers allObjects] indexOfObjectIdenticalTo:observer];
     
     if ( obsIdx != NSNotFound ) {
+        if ( [observers count] == 1 ) {
+            [self enumerateObjectsUsingBlock:^(id obj, NSUInteger idx, BOOL *stop) {
+                [obj rz_removeTarget:self action:@selector(_rz_objectUpdated:) forKeyPathChange:kRZDBObjectUpdateKey];
+            }];
+        }
+
         [observers removePointerAtIndex:obsIdx];
     }
 }
@@ -283,6 +300,11 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
 - (void)_rz_setPendingInsertedObjects:(NSArray *)pendingInsertedObjects
 {
     objc_setAssociatedObject(self, @selector(_rz_pendingInsertedObjects), pendingInsertedObjects, OBJC_ASSOCIATION_RETAIN);
+}
+
+- (void)_rz_objectUpdated:(NSDictionary *)change
+{
+    [self rz_sendUpdateNotificationForObject:change[kRZDBChangeKeyObject]];
 }
 
 - (BOOL)_rz_isBatchUpdating
@@ -512,6 +534,8 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
 - (void)_rz_removeObjectsInRangeSilently:(NSRange)range
 {
     while ( range.length > 0 ) {
+        [self[range.location] rz_removeTarget:self action:@selector(_rz_objectUpdated:) forKeyPathChange:kRZDBObjectUpdateKey];
+
         struct objc_super rzSuper = _rz_super(self);
         ((void (*)(struct objc_super*, SEL, NSUInteger))objc_msgSendSuper)(&rzSuper, @selector(removeObjectAtIndex:), range.location);
         
@@ -621,6 +645,8 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
         
         struct objc_super rzSuper = _rz_super(self);
         ((void (*)(struct objc_super*, SEL, id, NSUInteger))objc_msgSendSuper)(&rzSuper, @selector(insertObject:atIndex:), obj, curIndex);
+
+         [obj rz_addTarget:self action:@selector(_rz_objectUpdated:) forKeyPathChange:kRZDBObjectUpdateKey];
         
         curIndex = [indexes indexGreaterThanIndex:curIndex];
     }];
@@ -671,17 +697,25 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
     if ( moveCopy.count > 0 ) {
         [self _rz_notifyObserversOfMutation:kRZDBArrayMutationTypeMove indexes:moveCopy prior:YES];
     }
-    
+
     curIndex = [indexes firstIndex];
     
     [objects enumerateObjectsUsingBlock:^(id obj, NSUInteger idx, BOOL *stop) {
 
+        if ( [insertCopy containsIndex:idx] ) {
+            [self[curIndex] rz_removeTarget:self action:@selector(_rz_objectUpdated:) forKeyPathChange:kRZDBObjectUpdateKey];
+        }
+
         struct objc_super rzSuper = _rz_super(self);
         ((void (*)(struct objc_super*, SEL, NSUInteger, id))objc_msgSendSuper)(&rzSuper, @selector(replaceObjectAtIndex:withObject:), curIndex, obj);
-        
+
+        if ( [insertCopy containsIndex:idx] ) {
+            [obj rz_addTarget:self action:@selector(_rz_objectUpdated:) forKeyPathChange:kRZDBObjectUpdateKey];
+        }
+
         curIndex = [indexes indexGreaterThanIndex:curIndex];
     }];
-    
+
     if ( insertCopy.count > 0 ) {
         [self _rz_notifyObserversOfMutation:kRZDBArrayMutationTypeRemove indexes:insertCopy prior:NO];
         [self _rz_notifyObserversOfMutation:kRZDBArrayMutationTypeInsert indexes:insertCopy prior:NO];
@@ -837,5 +871,19 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
 {
     return [[self.backingArray copy] debugDescription];
 }
+
+@end
+
+@interface NSObject (RZDBObjectUpdates)
+@end
+
+@implementation NSObject (RZDBObjectUpdates)
+
+- (id)RZDBObjectUpdate
+{
+    return nil;
+}
+
+- (void)setRZDBObjectUpdate {}
 
 @end

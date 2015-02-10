@@ -29,6 +29,8 @@
 
 #import <Foundation/Foundation.h>
 
+OBJC_EXTERN NSString* const kRZDBObjectUpdateKey;
+
 @protocol RZDBArrayObserver <NSObject>
 
 @optional
