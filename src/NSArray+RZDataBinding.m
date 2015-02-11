@@ -304,7 +304,15 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
 
 - (void)_rz_objectUpdated:(NSDictionary *)change
 {
-    [self rz_sendUpdateNotificationForObject:change[kRZDBChangeKeyObject]];
+    id object = change[kRZDBChangeKeyObject];
+
+    if ( [self _rz_isBatchUpdating] ) {
+        [self rz_sendUpdateNotificationForObject:object];
+    }
+    else {
+        [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(rz_sendUpdateNotificationForObject:) object:object];
+        [self performSelector:@selector(rz_sendUpdateNotificationForObject:) withObject:object afterDelay:0.0];
+    }
 }
 
 - (BOOL)_rz_isBatchUpdating
