@@ -33,7 +33,7 @@
 #import "NSObject+RZDataBinding.h"
 #import "NSArray+RZDataBinding.h"
 
-NSString* const kRZDBObjectUpdateKey = @"RZDBObjectUpdate";
+NSString* const kRZDBObjectUpdateKey = @"RZDBObjectUpdateKey";
 
 typedef NS_ENUM(NSUInteger, RZDBArrayMutationType) {
     kRZDBArrayMutationTypeUnknown   = 0,
@@ -119,17 +119,9 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
 
 - (NSPointerArray *)_rz_arrayObservers;
 
-- (NSMutableDictionary *)_rz_pendingNotifications;
-- (void)_rz_setPendingNotifications:(NSMutableDictionary *)pendingNotifications;
-
-- (NSArray *)_rz_preBatchObjects;
-- (void)_rz_setPreBatchObjects:(NSArray *)preBatchObjects;
+#pragma mark - observer notification
 
 - (void)_rz_objectUpdated:(NSDictionary *)change;
-
-- (BOOL)_rz_isBatchUpdating;
-- (void)_rz_pushBatchUpdate;
-- (void)_rz_popBatchUpdateForce:(BOOL)force;
 
 - (void)_rz_notifyObserversOfBatchUpdate:(BOOL)batchUpdating;
 
@@ -138,6 +130,18 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
 - (void)_rz_notifyObserver:(id<RZDBArrayObserver>)observer ofInsert:(RZDBArrayMutation *)insert prior:(BOOL)prior;
 - (void)_rz_notifyObserver:(id<RZDBArrayObserver>)observer ofMove:(RZDBArrayMutation *)move prior:(BOOL)prior;
 - (void)_rz_notifyObserver:(id<RZDBArrayObserver>)observer ofUpdate:(RZDBArrayMutation *)update;
+
+#pragma mark - batch updating
+
+- (BOOL)_rz_isBatchUpdating;
+- (void)_rz_pushBatchUpdate;
+- (void)_rz_popBatchUpdateForce:(BOOL)force;
+
+- (NSMutableDictionary *)_rz_pendingNotifications;
+- (void)_rz_setPendingNotifications:(NSMutableDictionary *)pendingNotifications;
+
+- (NSArray *)_rz_preBatchObjects;
+- (void)_rz_setPreBatchObjects:(NSArray *)preBatchObjects;
 
 - (void)_rz_addBatchUpdate:(RZDBArrayMutation *)update;
 - (void)_rz_sendPendingNotifications;
@@ -284,25 +288,7 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
     return observers;
 }
 
-- (NSMutableArray *)_rz_pendingNotifications
-{
-    return objc_getAssociatedObject(self, _cmd);
-}
-
-- (void)_rz_setPendingNotifications:(NSMutableDictionary *)pendingNotifications
-{
-    objc_setAssociatedObject(self, @selector(_rz_pendingNotifications), pendingNotifications, OBJC_ASSOCIATION_RETAIN);
-}
-
-- (NSArray *)_rz_preBatchObjects
-{
-    return objc_getAssociatedObject(self, _cmd);
-}
-
-- (void)_rz_setPreBatchObjects:(NSArray *)preBatchObjects
-{
-    objc_setAssociatedObject(self, @selector(_rz_preBatchObjects), preBatchObjects, OBJC_ASSOCIATION_COPY);
-}
+#pragma mark - observer notification
 
 - (void)_rz_objectUpdated:(NSDictionary *)change
 {
@@ -315,41 +301,6 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
         [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(rz_sendUpdateNotificationForObject:) object:object];
         [self performSelector:@selector(rz_sendUpdateNotificationForObject:) withObject:object afterDelay:0.0];
     }
-}
-
-- (BOOL)_rz_isBatchUpdating
-{
-    return ([objc_getAssociatedObject(self, kRZDBBatchUpdateNumKey) unsignedIntegerValue] > 0);
-}
-
-- (void)_rz_pushBatchUpdate
-{
-    NSUInteger count = [objc_getAssociatedObject(self, kRZDBBatchUpdateNumKey) unsignedIntegerValue];
-    objc_setAssociatedObject(self, kRZDBBatchUpdateNumKey, @(++count), OBJC_ASSOCIATION_RETAIN);
-}
-
-- (void)_rz_popBatchUpdateForce:(BOOL)force
-{
-    NSUInteger count = [objc_getAssociatedObject(self, kRZDBBatchUpdateNumKey) unsignedIntegerValue];
-
-    if ( count > 0 ) {
-        count = force ? 0 : (count - 1);
-        objc_setAssociatedObject(self, kRZDBBatchUpdateNumKey, @(count), OBJC_ASSOCIATION_RETAIN);
-    }
-}
-
-- (void)_rz_setBatchUpdating:(BOOL)updating force:(BOOL)force
-{
-    NSUInteger state = [objc_getAssociatedObject(self, _cmd) unsignedIntegerValue];
-    
-    if ( updating ) {
-        state = force ? 0 : (state + 1);
-    }
-    else if ( !updating && state > 0 ) {
-        state--;
-    }
-    
-    objc_setAssociatedObject(self, @selector(_rz_isBatchUpdating), @(state), OBJC_ASSOCIATION_RETAIN);
 }
 
 - (void)_rz_notifyObserversOfBatchUpdate:(BOOL)batchUpdating
@@ -452,26 +403,83 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
     }
 }
 
+#pragma mark - batch updating
+
+- (BOOL)_rz_isBatchUpdating
+{
+    return ([objc_getAssociatedObject(self, kRZDBBatchUpdateNumKey) unsignedIntegerValue] > 0);
+}
+
+- (void)_rz_pushBatchUpdate
+{
+    NSUInteger count = [objc_getAssociatedObject(self, kRZDBBatchUpdateNumKey) unsignedIntegerValue];
+    objc_setAssociatedObject(self, kRZDBBatchUpdateNumKey, @(++count), OBJC_ASSOCIATION_RETAIN);
+}
+
+- (void)_rz_popBatchUpdateForce:(BOOL)force
+{
+    NSUInteger count = [objc_getAssociatedObject(self, kRZDBBatchUpdateNumKey) unsignedIntegerValue];
+
+    if ( count > 0 ) {
+        count = force ? 0 : (count - 1);
+        objc_setAssociatedObject(self, kRZDBBatchUpdateNumKey, @(count), OBJC_ASSOCIATION_RETAIN);
+    }
+}
+
+- (void)_rz_setBatchUpdating:(BOOL)updating force:(BOOL)force
+{
+    NSUInteger state = [objc_getAssociatedObject(self, _cmd) unsignedIntegerValue];
+
+    if ( updating ) {
+        state = force ? 0 : (state + 1);
+    }
+    else if ( !updating && state > 0 ) {
+        state--;
+    }
+
+    objc_setAssociatedObject(self, @selector(_rz_isBatchUpdating), @(state), OBJC_ASSOCIATION_RETAIN);
+}
+
+- (NSMutableArray *)_rz_pendingNotifications
+{
+    return objc_getAssociatedObject(self, _cmd);
+}
+
+- (void)_rz_setPendingNotifications:(NSMutableDictionary *)pendingNotifications
+{
+    objc_setAssociatedObject(self, @selector(_rz_pendingNotifications), pendingNotifications, OBJC_ASSOCIATION_RETAIN);
+}
+
+- (NSArray *)_rz_preBatchObjects
+{
+    return objc_getAssociatedObject(self, _cmd);
+}
+
+- (void)_rz_setPreBatchObjects:(NSArray *)preBatchObjects
+{
+    objc_setAssociatedObject(self, @selector(_rz_preBatchObjects), preBatchObjects, OBJC_ASSOCIATION_COPY);
+}
+
 - (void)_rz_addBatchUpdate:(RZDBArrayMutation *)update
 {
     NSMutableDictionary *pendingNotifications = [self _rz_pendingNotifications];
-    
+
     NSMutableIndexSet *inserts = pendingNotifications[@(kRZDBArrayMutationTypeInsert)];
     NSMutableIndexSet *updates = pendingNotifications[@(kRZDBArrayMutationTypeUpdate)];
     NSMutableIndexSet *moves = pendingNotifications[@(kRZDBArrayMutationTypeMove)];
     NSMutableIndexSet *removes = pendingNotifications[@(kRZDBArrayMutationTypeRemove)];
-    
+
     [update.indexes enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL *stop) {
         switch ( update.mutationType ) {
-                
+
             case kRZDBArrayMutationTypeRemove: {
                 [updates shiftIndexesStartingAtIndex:idx + 1 by:-1];
                 [inserts shiftIndexesStartingAtIndex:idx + 1 by:-1];
                 [moves shiftIndexesStartingAtIndex:idx + 1 by:-1];
-                
+
                 // get index of removed object prior to updates
                 NSUInteger remIdx = [[self _rz_preBatchObjects] indexOfObjectIdenticalTo:self[idx]];
-                
+
                 if ( remIdx != NSNotFound ) {
                     // adjust previous remove indexes accordingly
                     [removes enumerateRangesUsingBlock:^(NSRange range, BOOL *stop) {
@@ -481,38 +489,38 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
                             *stop = YES;
                         }
                     }];
-                    
+
                     [removes addIndex:remIdx];
                 }
             }
                 break;
-                
+
             case kRZDBArrayMutationTypeInsert: {
                 [updates shiftIndexesStartingAtIndex:idx by:1];
                 [inserts shiftIndexesStartingAtIndex:idx by:1];
                 [moves shiftIndexesStartingAtIndex:idx by:1];
-                
+
                 [inserts addIndex:idx];
             }
                 break;
-                
+
             case kRZDBArrayMutationTypeMove: {
                 if ( [updates containsIndex:idx] ) {
                     NSUInteger oldIdx = [[self _rz_preBatchObjects] indexOfObjectIdenticalTo:self[idx]];
-                    
+
                     [updates removeIndex:idx];
                     [updates addIndex:oldIdx];
                 }
-                
+
                 [moves addIndex:idx];
             }
                 break;
-                
+
             case kRZDBArrayMutationTypeUpdate: {
                 [updates addIndex:idx];
             }
                 break;
-                
+
             default:
                 break;
         }
@@ -910,12 +918,12 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
 
 @implementation NSObject (RZDBObjectUpdates)
 
-- (id)RZDBObjectUpdate
+- (id)RZDBObjectUpdateKey
 {
     return nil;
 }
 
-- (void)setRZDBObjectUpdate {}
+- (void)setRZDBObjectUpdateKey {}
 
 @end
 
