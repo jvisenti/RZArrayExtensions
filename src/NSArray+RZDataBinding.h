@@ -29,7 +29,11 @@
 
 #import <Foundation/Foundation.h>
 
+#import "NSObject+RZDataBinding.h"
+
 OBJC_EXTERN NSString* const kRZDBObjectUpdateKey;
+
+#define RZDB_AUTOMATIC_UDPATES RZDB_AUTOMATIC_CLEANUP
 
 @protocol RZDBArrayObserver <NSObject>
 

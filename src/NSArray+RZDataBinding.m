@@ -27,10 +27,9 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-@import ObjectiveC.runtime;
-@import ObjectiveC.message;
+#import <objc/runtime.h>
+#import <objc/message.h>
 
-#import "NSObject+RZDataBinding.h"
 #import "NSArray+RZDataBinding.h"
 
 NSString* const kRZDBObjectUpdateKey = @"RZDBObjectUpdateKey";
@@ -119,9 +118,13 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
 
 - (NSPointerArray *)_rz_arrayObservers;
 
-#pragma mark - observer notification
+#pragma mark - automatic updates
 
+- (void)_rz_observeObject:(id)object;
 - (void)_rz_objectUpdated:(NSDictionary *)change;
+- (void)_rz_unobserveObject:(id)object;
+
+#pragma mark - observer notification
 
 - (void)_rz_notifyObserversOfBatchUpdate:(BOOL)batchUpdating;
 
@@ -164,7 +167,7 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
     if ( obsIdx == NSNotFound ) {
         if ( [observers count] == 0 ) {
             [self enumerateObjectsUsingBlock:^(id obj, NSUInteger idx, BOOL *stop) {
-                [obj rz_addTarget:self action:@selector(_rz_objectUpdated:) forKeyPathChange:kRZDBObjectUpdateKey];
+                [self _rz_observeObject:obj];
             }];
         }
 
@@ -182,7 +185,7 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
     if ( obsIdx != NSNotFound ) {
         if ( [observers count] == 1 ) {
             [self enumerateObjectsUsingBlock:^(id obj, NSUInteger idx, BOOL *stop) {
-                [obj rz_removeTarget:self action:@selector(_rz_objectUpdated:) forKeyPathChange:kRZDBObjectUpdateKey];
+                [self _rz_unobserveObject:obj];
             }];
         }
 
@@ -288,7 +291,14 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
     return observers;
 }
 
-#pragma mark - observer notification
+#pragma mark - automatic updates
+
+- (void)_rz_observeObject:(id)object
+{
+#if RZDB_AUTOMATIC_UDPATES
+    [object rz_addTarget:self action:@selector(_rz_objectUpdated:) forKeyPathChange:kRZDBObjectUpdateKey];
+#endif
+}
 
 - (void)_rz_objectUpdated:(NSDictionary *)change
 {
@@ -302,6 +312,13 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
         [self performSelector:@selector(rz_sendUpdateNotificationForObject:) withObject:object afterDelay:0.0];
     }
 }
+
+- (void)_rz_unobserveObject:(id)object
+{
+    [object rz_removeTarget:self action:@selector(_rz_objectUpdated:) forKeyPathChange:kRZDBObjectUpdateKey];
+}
+
+#pragma mark - observer notification
 
 - (void)_rz_notifyObserversOfBatchUpdate:(BOOL)batchUpdating
 {
@@ -578,7 +595,7 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
 - (void)_rz_removeObjectsInRangeSilently:(NSRange)range
 {
     while ( range.length > 0 ) {
-        [self[range.location] rz_removeTarget:self action:@selector(_rz_objectUpdated:) forKeyPathChange:kRZDBObjectUpdateKey];
+        [self _rz_unobserveObject:self[range.location]];
 
         struct objc_super rzSuper = _rz_super(self);
         ((void (*)(struct objc_super*, SEL, NSUInteger))objc_msgSendSuper)(&rzSuper, @selector(removeObjectAtIndex:), range.location);
@@ -674,7 +691,7 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
         struct objc_super rzSuper = _rz_super(self);
         ((void (*)(struct objc_super*, SEL, id, NSUInteger))objc_msgSendSuper)(&rzSuper, @selector(insertObject:atIndex:), obj, curIndex);
 
-         [obj rz_addTarget:self action:@selector(_rz_objectUpdated:) forKeyPathChange:kRZDBObjectUpdateKey];
+        [self _rz_observeObject:obj];
         
         curIndex = [indexes indexGreaterThanIndex:curIndex];
     }];
@@ -739,14 +756,14 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
     [objects enumerateObjectsUsingBlock:^(id obj, NSUInteger idx, BOOL *stop) {
 
         if ( [inserts containsIndex:idx] ) {
-            [self[curIndex] rz_removeTarget:self action:@selector(_rz_objectUpdated:) forKeyPathChange:kRZDBObjectUpdateKey];
+            [self _rz_unobserveObject:self[curIndex]];
         }
 
         struct objc_super rzSuper = _rz_super(self);
         ((void (*)(struct objc_super*, SEL, NSUInteger, id))objc_msgSendSuper)(&rzSuper, @selector(replaceObjectAtIndex:withObject:), curIndex, obj);
 
         if ( [inserts containsIndex:idx] ) {
-            [obj rz_addTarget:self action:@selector(_rz_objectUpdated:) forKeyPathChange:kRZDBObjectUpdateKey];
+            [obj _rz_observeObject:obj];
         }
 
         curIndex = [indexes indexGreaterThanIndex:curIndex];
