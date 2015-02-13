@@ -89,9 +89,11 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
 @property (strong, nonatomic) NSArray *objects;
 @property (copy, nonatomic) NSIndexSet *indexes;
 
+@property (strong, nonatomic) NSIndexPath *movePath;
+
 + (instancetype)removeMutationWithObjects:(NSArray *)objects indexes:(NSIndexSet *)indexes;
 + (instancetype)insertMutationWithObjects:(NSArray *)objects indexes:(NSIndexSet *)indexes;
-+ (instancetype)moveMutationWithIndexes:(NSIndexSet *)indexes;
++ (instancetype)moveMutationFromIndex:(NSUInteger)fromIdx toIndex:(NSUInteger)toIdx;
 + (instancetype)updateMutationWithIndexes:(NSIndexSet *)indexes;
 
 @end
@@ -101,7 +103,6 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
 @interface RZDBMutableArrayTemplate : NSMutableArray
 
 - (void)_rz_removeObjectsInRangeSilently:(NSRange)range;
-- (void)_rz_replaceObjectsWithSortedObjects:(NSArray *)sortedObjects;
 
 @end
 
@@ -123,23 +124,18 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
 
 - (void)_rz_observeObject:(id)object;
 - (void)_rz_objectUpdated:(NSDictionary *)change;
-- (void)_rz_unobserveObject:(id)object;
+- (void)_rz_unobserveObject:(id)object force:(BOOL)force;
 
 #pragma mark - observer notification
 
 - (void)_rz_notifyObserversOfBatchUpdate:(BOOL)batchUpdating;
-
-- (void)_rz_notifyObserversOfMutation:(RZDBArrayMutation *)mutation prior:(BOOL)prior;
-- (void)_rz_notifyObserver:(id<RZDBArrayObserver>)observer ofRemove:(RZDBArrayMutation *)remove prior:(BOOL)prior;
-- (void)_rz_notifyObserver:(id<RZDBArrayObserver>)observer ofInsert:(RZDBArrayMutation *)insert prior:(BOOL)prior;
-- (void)_rz_notifyObserver:(id<RZDBArrayObserver>)observer ofMove:(RZDBArrayMutation *)move prior:(BOOL)prior;
-- (void)_rz_notifyObserver:(id<RZDBArrayObserver>)observer ofUpdate:(RZDBArrayMutation *)update;
+- (void)_rz_willMutate:(RZDBArrayMutation *)mutation;
+- (void)_rz_didMutate:(RZDBArrayMutation *)mutation;
 
 #pragma mark - batch updating
 
 - (BOOL)_rz_isBatchUpdating;
-- (void)_rz_pushBatchUpdate;
-- (void)_rz_popBatchUpdateForce:(BOOL)force;
+- (void)_rz_closeBatchUpdateForce:(BOOL)force;
 
 - (NSMutableDictionary *)_rz_pendingNotifications;
 - (void)_rz_setPendingNotifications:(NSMutableDictionary *)pendingNotifications;
@@ -186,7 +182,7 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
     if ( obsIdx != NSNotFound ) {
         if ( [observers count] == 1 ) {
             [self enumerateObjectsUsingBlock:^(id obj, NSUInteger idx, BOOL *stop) {
-                [self _rz_unobserveObject:obj];
+                [self _rz_unobserveObject:obj force:YES];
             }];
         }
 
@@ -205,19 +201,18 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
             [self _rz_addBatchUpdate:update];
         }
         else {
-            [self _rz_notifyObserversOfMutation:update prior:NO];
+            [self _rz_didMutate:update];
         }
     }
 }
 
-- (void)rz_beginBatchUpdates
+- (void)rz_openBatchUpdate
 {
     if ( ![self _rz_isBatchUpdating] ) {
         NSMutableDictionary *pendingNotifications = [NSMutableDictionary dictionary];
         
         pendingNotifications[@(kRZDBArrayMutationTypeInsert)] = [NSMutableIndexSet indexSet];
         pendingNotifications[@(kRZDBArrayMutationTypeUpdate)] = [NSMutableIndexSet indexSet];
-        pendingNotifications[@(kRZDBArrayMutationTypeMove)] = [NSMutableIndexSet indexSet];
         pendingNotifications[@(kRZDBArrayMutationTypeRemove)] = [NSMutableIndexSet indexSet];
         
         [self _rz_setPreBatchObjects:self];
@@ -225,23 +220,15 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
         
         [self _rz_notifyObserversOfBatchUpdate:YES];
     }
-    
-    [self _rz_pushBatchUpdate];
+
+    NSUInteger count = [objc_getAssociatedObject(self, kRZDBBatchUpdateNumKey) unsignedIntegerValue];
+    objc_setAssociatedObject(self, kRZDBBatchUpdateNumKey, @(++count), OBJC_ASSOCIATION_RETAIN);
 }
 
-- (void)rz_endBatchUpdates:(BOOL)force
+- (void)rz_closeBatchUpdate
 {
     if ( [self _rz_isBatchUpdating] ) {
-        [self _rz_popBatchUpdateForce:force];
-        
-        if ( ![self _rz_isBatchUpdating] ) {
-            [self _rz_sendPendingNotifications];
-            
-            [self _rz_setPreBatchObjects:nil];
-            [self _rz_setPendingNotifications:nil];
-            
-            [self _rz_notifyObserversOfBatchUpdate:NO];
-        }
+        [self _rz_closeBatchUpdateForce:NO];
     }
 }
 
@@ -328,9 +315,11 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
     }
 }
 
-- (void)_rz_unobserveObject:(id)object
+- (void)_rz_unobserveObject:(id)object force:(BOOL)force
 {
-    [object rz_removeTarget:self action:@selector(_rz_objectUpdated:) forKeyPathChange:kRZDBObjectUpdateKey];
+    if ( force || [self indexOfObjectIdenticalTo:object] == NSNotFound ) {
+        [object rz_removeTarget:self action:@selector(_rz_objectUpdated:) forKeyPathChange:kRZDBObjectUpdateKey];
+    }
 }
 
 #pragma mark - observer notification
@@ -350,88 +339,58 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
     }];
 }
 
-- (void)_rz_notifyObserversOfMutation:(RZDBArrayMutation *)mutation prior:(BOOL)prior
+- (void)_rz_willMutate:(RZDBArrayMutation *)mutation
 {
-    NSPointerArray *observers = [self _rz_arrayObservers];
-    [observers compact];
-    
-    if ( observers.count > 0 ) {
-        BOOL batchUpdating = [self _rz_isBatchUpdating];
+    if ( [self _rz_isBatchUpdating] ) {
+        [self _rz_addBatchUpdate:mutation];
+    }
+}
+
+- (void)_rz_didMutate:(RZDBArrayMutation *)mutation
+{
+    if ( ![self _rz_isBatchUpdating] ) {
+        NSPointerArray *observers = [self _rz_arrayObservers];
+        [observers compact];
         
-        if ( prior && batchUpdating ) {
-            [self _rz_addBatchUpdate:mutation];
-        }
-        
-        if ( prior || !batchUpdating ) {
-            [[observers allObjects] enumerateObjectsUsingBlock:^(id<RZDBArrayObserver> observer, NSUInteger idx, BOOL *stop) {
-                switch ( mutation.mutationType ) {
-                    case kRZDBArrayMutationTypeRemove: {
-                        [self _rz_notifyObserver:observer ofRemove:mutation prior:prior];
-                        break;
+        [[observers allObjects] enumerateObjectsUsingBlock:^(id<RZDBArrayObserver> observer, NSUInteger idx, BOOL *stop) {
+            switch ( mutation.mutationType ) {
+                case kRZDBArrayMutationTypeRemove: {
+                    if ( [observer respondsToSelector:@selector(array:didRemoveObjects:atIndexes:)] ) {
+                        [observer array:self didRemoveObjects:mutation.objects atIndexes:mutation.indexes];
                     }
-
-                    case kRZDBArrayMutationTypeInsert: {
-                        [self _rz_notifyObserver:observer ofInsert:mutation prior:prior];
-                        break;
-                    }
-
-                    case kRZDBArrayMutationTypeMove: {
-                        [self _rz_notifyObserver:observer ofMove:mutation prior:prior];
-                        break;
-                    }
-
-                    case kRZDBArrayMutationTypeUpdate: {
-                        [self _rz_notifyObserver:observer ofUpdate:mutation];
-                        break;
-                    }
-
-                    default:
-                        break;
+                    break;
                 }
-            }];
-        }
-    }
-}
 
-- (void)_rz_notifyObserver:(id<RZDBArrayObserver>)observer ofRemove:(RZDBArrayMutation *)remove prior:(BOOL)prior
-{
-    if ( prior && [observer respondsToSelector:@selector(array:willRemoveObjectsAtIndexes:)] ) {
-        [observer array:self willRemoveObjectsAtIndexes:remove.indexes];
-    }
-    else if ( !prior && [observer respondsToSelector:@selector(array:didRemoveObjects:atIndexes:)] ) {
-        [observer array:self didRemoveObjects:remove.objects atIndexes:remove.indexes];
-    }
-}
+                case kRZDBArrayMutationTypeInsert: {
+                    if ( [observer respondsToSelector:@selector(array:didInsertObjectsAtIndexes:)] ) {
+                        [observer array:self didInsertObjectsAtIndexes:mutation.indexes];
+                    }
+                    break;
+                }
 
-- (void)_rz_notifyObserver:(id<RZDBArrayObserver>)observer ofInsert:(RZDBArrayMutation *)insert prior:(BOOL)prior
-{
-    if ( prior && [observer respondsToSelector:@selector(array:willInsertObjects:atIndexes:)] ) {
-        [observer array:self willInsertObjects:insert.objects atIndexes:insert.indexes];
-    }
-    else if ( !prior && [observer respondsToSelector:@selector(array:didInsertObjectsAtIndexes:)] ) {
-        [observer array:self didInsertObjectsAtIndexes:insert.indexes];
-    }
-}
+                case kRZDBArrayMutationTypeMove: {
+                    if ( [observer respondsToSelector:@selector(array:didMoveObjectAtIndex:toIndex:)] ) {
+                        NSUInteger oldIdx = [mutation.movePath indexAtPosition:0];
+                        NSUInteger newIdx = [mutation.movePath indexAtPosition:1];
 
-- (void)_rz_notifyObserver:(id<RZDBArrayObserver>)observer ofMove:(RZDBArrayMutation *)move prior:(BOOL)prior
-{
-    // NOTE: moves are always part of a batch operation
-    [move.indexes enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL *stop) {
-        NSUInteger oldIndex = [[self _rz_preBatchObjects] indexOfObjectIdenticalTo:self[idx]];
+                        if ( oldIdx != NSNotFound && oldIdx != newIdx ) {
+                            [observer array:self didMoveObjectAtIndex:oldIdx toIndex:newIdx];
+                        }
+                    }
+                    break;
+                }
 
-        if ( prior && [observer respondsToSelector:@selector(array:willMoveObjectAtIndex:toIndex:)] ) {
-            [observer array:self willMoveObjectAtIndex:oldIndex toIndex:idx];
-        }
-        else if ( !prior && oldIndex != idx && [observer respondsToSelector:@selector(array:didMoveObjectAtIndex:toIndex:)] ) {
-            [observer array:self didMoveObjectAtIndex:oldIndex toIndex:idx];
-        }
-    }];
-}
+                case kRZDBArrayMutationTypeUpdate: {
+                    if ( [observer respondsToSelector:@selector(array:didUpdateObjectsAtIndexes:)] ) {
+                        [observer array:self didUpdateObjectsAtIndexes:mutation.indexes];
+                    }
+                    break;
+                }
 
-- (void)_rz_notifyObserver:(id<RZDBArrayObserver>)observer ofUpdate:(RZDBArrayMutation *)update
-{
-    if ( ![self _rz_isBatchUpdating] && [observer respondsToSelector:@selector(array:didUpdateObjectsAtIndexes:)] ) {
-        [observer array:self didUpdateObjectsAtIndexes:update.indexes];
+                default:
+                    break;
+            }
+        }];
     }
 }
 
@@ -442,13 +401,7 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
     return ([objc_getAssociatedObject(self, kRZDBBatchUpdateNumKey) unsignedIntegerValue] > 0);
 }
 
-- (void)_rz_pushBatchUpdate
-{
-    NSUInteger count = [objc_getAssociatedObject(self, kRZDBBatchUpdateNumKey) unsignedIntegerValue];
-    objc_setAssociatedObject(self, kRZDBBatchUpdateNumKey, @(++count), OBJC_ASSOCIATION_RETAIN);
-}
-
-- (void)_rz_popBatchUpdateForce:(BOOL)force
+- (void)_rz_closeBatchUpdateForce:(BOOL)force
 {
     NSUInteger count = [objc_getAssociatedObject(self, kRZDBBatchUpdateNumKey) unsignedIntegerValue];
 
@@ -457,6 +410,15 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
 
         id obj = count > 0 ? @(count) : nil;
         objc_setAssociatedObject(self, kRZDBBatchUpdateNumKey, obj, OBJC_ASSOCIATION_RETAIN);
+    }
+
+    if ( count == 0 ) {
+        [self _rz_sendPendingNotifications];
+
+        [self _rz_setPreBatchObjects:nil];
+        [self _rz_setPendingNotifications:nil];
+
+        [self _rz_notifyObserversOfBatchUpdate:NO];
     }
 }
 
@@ -486,7 +448,6 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
 
     NSMutableIndexSet *inserts = pendingNotifications[@(kRZDBArrayMutationTypeInsert)];
     NSMutableIndexSet *updates = pendingNotifications[@(kRZDBArrayMutationTypeUpdate)];
-    NSMutableIndexSet *moves = pendingNotifications[@(kRZDBArrayMutationTypeMove)];
     NSMutableIndexSet *removes = pendingNotifications[@(kRZDBArrayMutationTypeRemove)];
 
     [update.indexes enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL *stop) {
@@ -495,7 +456,6 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
             case kRZDBArrayMutationTypeRemove: {
                 [updates shiftIndexesStartingAtIndex:idx + 1 by:-1];
                 [inserts shiftIndexesStartingAtIndex:idx + 1 by:-1];
-                [moves shiftIndexesStartingAtIndex:idx + 1 by:-1];
 
                 // get index of removed object prior to updates
                 NSUInteger remIdx = [[self _rz_preBatchObjects] indexOfObjectIdenticalTo:self[idx]];
@@ -518,21 +478,8 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
             case kRZDBArrayMutationTypeInsert: {
                 [updates shiftIndexesStartingAtIndex:idx by:1];
                 [inserts shiftIndexesStartingAtIndex:idx by:1];
-                [moves shiftIndexesStartingAtIndex:idx by:1];
 
                 [inserts addIndex:idx];
-            }
-                break;
-
-            case kRZDBArrayMutationTypeMove: {
-                if ( [updates containsIndex:idx] ) {
-                    NSUInteger oldIdx = [[self _rz_preBatchObjects] indexOfObjectIdenticalTo:self[idx]];
-
-                    [updates removeIndex:idx];
-                    [updates addIndex:oldIdx];
-                }
-
-                [moves addIndex:idx];
             }
                 break;
 
@@ -549,44 +496,50 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
 
 - (void)_rz_sendPendingNotifications
 {
-    NSDictionary *updates = [[self _rz_pendingNotifications] copy];
-    
-    NSArray *notificationOrder = @[@(kRZDBArrayMutationTypeRemove), @(kRZDBArrayMutationTypeInsert), @(kRZDBArrayMutationTypeMove), @(kRZDBArrayMutationTypeUpdate)];
-    
-    [notificationOrder enumerateObjectsUsingBlock:^(NSNumber *key, NSUInteger idx, BOOL *stop) {
-        NSIndexSet *pendingMutations = updates[key];
-        
-        if ( pendingMutations.count ) {
-            RZDBArrayMutationType mutationType = [key unsignedIntegerValue];
-            NSIndexSet *indexes = updates[key];
+    NSDictionary *pendingNotifications = [[self _rz_pendingNotifications] copy];
 
-            RZDBArrayMutation *mutation = nil;
+    NSMutableIndexSet *removes = pendingNotifications[@(kRZDBArrayMutationTypeRemove)];
+    NSMutableIndexSet *inserts = pendingNotifications[@(kRZDBArrayMutationTypeInsert)];
+    NSMutableIndexSet *updates = pendingNotifications[@(kRZDBArrayMutationTypeUpdate)];
 
-            switch ( mutationType ) {
-                case kRZDBArrayMutationTypeRemove:
-                    mutation = [RZDBArrayMutation removeMutationWithObjects:[[self _rz_preBatchObjects] objectsAtIndexes:indexes] indexes:indexes];
-                    break;
+    // compute moves separately based on removes/inserts
+    NSMutableArray *moves = [NSMutableArray array];
 
-                case kRZDBArrayMutationTypeInsert:
-                    mutation = [RZDBArrayMutation insertMutationWithObjects:[self objectsAtIndexes:indexes] indexes:indexes];
-                    break;
+    [[inserts copy] enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL *stop) {
+        id insertedObj = self[idx];
 
-                case kRZDBArrayMutationTypeMove:
-                    mutation = [RZDBArrayMutation moveMutationWithIndexes:indexes];
-                    break;
+        NSUInteger oldIdx = [[self _rz_preBatchObjects] indexOfObjectIdenticalTo:insertedObj];
 
-                case kRZDBArrayMutationTypeUpdate:
-                    mutation = [RZDBArrayMutation updateMutationWithIndexes:indexes];
-                    break;
-                    
-                default:
-                    break;
-            }
+        if ( oldIdx != NSNotFound ) {
+            [removes removeIndex:oldIdx];
+            [inserts removeIndex:idx];
 
-            // all post-batch notifications are didChange
-            [self _rz_notifyObserversOfMutation:mutation prior:NO];
+            RZDBArrayMutation *moveMutation = [RZDBArrayMutation moveMutationFromIndex:oldIdx toIndex:idx];
+            [moves addObject:moveMutation];
         }
     }];
+
+    if ( removes.count > 0 ) {
+        RZDBArrayMutation *removeMutation = [RZDBArrayMutation removeMutationWithObjects:[[self _rz_preBatchObjects] objectsAtIndexes:removes] indexes:removes];
+
+        [self _rz_didMutate:removeMutation];
+    }
+
+    if ( inserts.count > 0 ) {
+        RZDBArrayMutation *insertMutation = [RZDBArrayMutation insertMutationWithObjects:[self objectsAtIndexes:inserts] indexes:inserts];
+
+        [self _rz_didMutate:insertMutation];
+    }
+
+    [moves enumerateObjectsUsingBlock:^(RZDBArrayMutation *moveMutation, NSUInteger idx, BOOL *stop) {
+        [self _rz_didMutate:moveMutation];
+    }];
+
+    if ( updates.count > 0 ) {
+        RZDBArrayMutation *updateMutation = [RZDBArrayMutation updateMutationWithIndexes:updates];
+
+        [self _rz_didMutate:updateMutation];
+    }
 }
 
 @end
@@ -600,41 +553,14 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
     struct objc_super rzSuper = _rz_super(self);
 
     while ( range.length > 0 ) {
-        [self _rz_unobserveObject:self[range.location]];
+        id obj = self[range.location];
 
         ((void (*)(struct objc_super*, SEL, NSUInteger))objc_msgSendSuper)(&rzSuper, @selector(removeObjectAtIndex:), range.location);
-        
+
+        [self _rz_unobserveObject:obj force:NO];
+
         range.length--;
     }
-}
-
-- (void)_rz_replaceObjectsWithSortedObjects:(NSArray *)sortedObjects
-{
-    [self rz_beginBatchUpdates];
-
-    NSMutableIndexSet *movedIndexes = [NSMutableIndexSet indexSet];
-
-    [sortedObjects enumerateObjectsUsingBlock:^(id obj, NSUInteger idx, BOOL *stop) {
-        NSUInteger curIdx = [self indexOfObjectIdenticalTo:obj];
-
-        if ( curIdx != idx ) {
-            [movedIndexes addIndex:idx];
-        }
-    }];
-
-    RZDBArrayMutation *move = [RZDBArrayMutation moveMutationWithIndexes:movedIndexes];
-
-    [self _rz_notifyObserversOfMutation:move prior:YES];
-
-    __block struct objc_super rzSuper = _rz_super(self);
-
-    [sortedObjects enumerateObjectsUsingBlock:^(id obj, NSUInteger idx, BOOL *stop) {
-        ((void (*)(struct objc_super*, SEL, NSUInteger, id))objc_msgSendSuper)(&rzSuper, @selector(replaceObjectAtIndex:withObject:), idx, obj);
-    }];
-
-    [self _rz_notifyObserversOfMutation:move prior:NO];
-    
-    [self rz_endBatchUpdates:NO];
 }
 
 #pragma mark - category overrides
@@ -655,7 +581,7 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
     [super rz_removeObserver:observer];
     
     if ( [self _rz_arrayObservers].count == 0 ) {
-        [self rz_endBatchUpdates:YES];
+        [self _rz_closeBatchUpdateForce:YES];
         
         object_setClass(self, [self superclass]);
     }
@@ -673,7 +599,7 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
     NSArray *objects = [self objectsAtIndexes:indexes];
     RZDBArrayMutation *mutation = [RZDBArrayMutation removeMutationWithObjects:objects indexes:indexes];
 
-    [self _rz_notifyObserversOfMutation:mutation prior:YES];
+    [self _rz_willMutate:mutation];
 
     __block NSUInteger numRemoved = 0;
 
@@ -683,7 +609,7 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
         numRemoved = range.length;
     }];
 
-    [self _rz_notifyObserversOfMutation:mutation prior:NO];
+    [self _rz_didMutate:mutation];
 }
 
 - (void)removeObjectsInRange:(NSRange)range
@@ -692,11 +618,11 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
     NSArray *objects = [self objectsAtIndexes:indexes];
     RZDBArrayMutation *mutation = [RZDBArrayMutation removeMutationWithObjects:objects indexes:indexes];
 
-    [self _rz_notifyObserversOfMutation:mutation prior:YES];
+    [self _rz_willMutate:mutation];
 
     [self _rz_removeObjectsInRangeSilently:range];
 
-    [self _rz_notifyObserversOfMutation:mutation prior:NO];
+    [self _rz_didMutate:mutation];
 }
 
 - (void)removeAllObjects
@@ -715,7 +641,7 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
 {
     RZDBArrayMutation *mutation = [RZDBArrayMutation insertMutationWithObjects:objects indexes:indexes];
 
-    [self _rz_notifyObserversOfMutation:mutation prior:YES];
+    [self _rz_willMutate:mutation];
 
     __block NSUInteger curIndex = [indexes firstIndex];
     __block struct objc_super rzSuper = _rz_super(self);
@@ -727,8 +653,8 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
         
         curIndex = [indexes indexGreaterThanIndex:curIndex];
     }];
-    
-    [self _rz_notifyObserversOfMutation:mutation prior:NO];
+
+    [self _rz_didMutate:mutation];
 }
 
 #pragma mark - replace overrides
@@ -749,7 +675,7 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
 
 - (void)replaceObjectsInRange:(NSRange)range withObjectsFromArray:(NSArray *)otherArray range:(NSRange)otherRange
 {
-    [self rz_beginBatchUpdates];
+    [self rz_openBatchUpdate];
 
     NSRange replaceRange = NSMakeRange(range.location, MIN(range.length, otherRange.length));
     NSRange replacementRange = NSMakeRange(otherRange.location, replaceRange.length);
@@ -768,36 +694,37 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
         [self insertObjects:[otherArray subarrayWithRange:insertingRange] atIndexes:[NSIndexSet indexSetWithIndexesInRange:insertRange]];
     }
 
-    [self rz_endBatchUpdates:NO];
+    [self rz_closeBatchUpdate];
 }
 
 - (void)replaceObjectsAtIndexes:(NSIndexSet *)indexes withObjects:(NSArray *)objects
 {
-    [self rz_beginBatchUpdates];
+    [self rz_openBatchUpdate];
 
     RZDBArrayMutation *removeMutation = [RZDBArrayMutation removeMutationWithObjects:[self objectsAtIndexes:indexes] indexes:indexes];
     RZDBArrayMutation *insertMutation = [RZDBArrayMutation insertMutationWithObjects:objects indexes:indexes];
 
-    [self _rz_notifyObserversOfMutation:removeMutation prior:YES];
-    [self _rz_notifyObserversOfMutation:insertMutation prior:YES];
+    [self _rz_willMutate:removeMutation];
+    [self _rz_willMutate:insertMutation];
 
     __block NSUInteger curIndex = [indexes firstIndex];
     __block struct objc_super rzSuper = _rz_super(self);
 
     [objects enumerateObjectsUsingBlock:^(id obj, NSUInteger idx, BOOL *stop) {
-        [self _rz_unobserveObject:self[curIndex]];
+        id oldObj = self[curIndex];
 
         ((void (*)(struct objc_super*, SEL, NSUInteger, id))objc_msgSendSuper)(&rzSuper, @selector(replaceObjectAtIndex:withObject:), curIndex, obj);
 
+        [self _rz_unobserveObject:oldObj force:NO];
         [self _rz_observeObject:obj];
 
         curIndex = [indexes indexGreaterThanIndex:curIndex];
     }];
 
-    [self _rz_notifyObserversOfMutation:removeMutation prior:NO];
-    [self _rz_notifyObserversOfMutation:insertMutation prior:NO];
+    [self _rz_didMutate:removeMutation];
+    [self _rz_didMutate:insertMutation];
 
-    [self rz_endBatchUpdates:NO];
+    [self rz_closeBatchUpdate];
 }
 
 #pragma mark - exchange overrides
@@ -808,44 +735,47 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
         return;
     }
     
-    [self rz_beginBatchUpdates];
+    [self rz_openBatchUpdate];
 
-    RZDBArrayMutation *firstMove = [RZDBArrayMutation moveMutationWithIndexes:[NSIndexSet indexSetWithIndex:idx1]];
-    RZDBArrayMutation *secondMove = [RZDBArrayMutation moveMutationWithIndexes:[NSIndexSet indexSetWithIndex:idx2]];
-    
-    [self _rz_notifyObserversOfMutation:firstMove prior:YES];
-    [self _rz_notifyObserversOfMutation:secondMove prior:YES];
-    
-    struct objc_super rzSuper = _rz_super(self);
-    ((void (*)(struct objc_super*, SEL, NSUInteger, NSUInteger))objc_msgSendSuper)(&rzSuper, _cmd, idx1, idx2);
+    id obj1 = self[idx1];
+    id obj2 = self[idx2];
 
-    [self _rz_notifyObserversOfMutation:firstMove prior:NO];
-    [self _rz_notifyObserversOfMutation:secondMove prior:NO];
+    [self replaceObjectAtIndex:idx1 withObject:obj2];
+    [self replaceObjectAtIndex:idx2 withObject:obj1];
     
-    [self rz_endBatchUpdates:NO];
+    [self rz_closeBatchUpdate];
 }
 
 #pragma mark - sort overrides
 
 - (void)sortUsingComparator:(NSComparator)cmptr
 {
-    NSArray *sortedArray = [self sortedArrayUsingComparator:cmptr];
+    [self rz_openBatchUpdate];
 
-    [self _rz_replaceObjectsWithSortedObjects:sortedArray];
+    struct objc_super rzSuper = _rz_super(self);
+    ((void (*)(struct objc_super*, SEL, NSComparator))objc_msgSendSuper)(&rzSuper, _cmd, cmptr);
+
+    [self rz_closeBatchUpdate];
 }
 
 - (void)sortWithOptions:(NSSortOptions)opts usingComparator:(NSComparator)cmptr
 {
-    NSArray *sortedArray = [self sortedArrayWithOptions:opts usingComparator:cmptr];
+    [self rz_openBatchUpdate];
 
-    [self _rz_replaceObjectsWithSortedObjects:sortedArray];
+    struct objc_super rzSuper = _rz_super(self);
+    ((void (*)(struct objc_super*, SEL, NSSortOptions, NSComparator))objc_msgSendSuper)(&rzSuper, _cmd, opts, cmptr);
+
+    [self rz_closeBatchUpdate];
 }
 
 - (void)sortUsingDescriptors:(NSArray *)sortDescriptors
 {
-    NSArray *sortedArray = [self sortedArrayUsingDescriptors:sortDescriptors];
+    [self rz_openBatchUpdate];
 
-    [self _rz_replaceObjectsWithSortedObjects:sortedArray];
+    struct objc_super rzSuper = _rz_super(self);
+    ((void (*)(struct objc_super*, SEL, NSArray*))objc_msgSendSuper)(&rzSuper, _cmd, sortDescriptors);
+
+    [self rz_closeBatchUpdate];
 }
 
 @end
@@ -942,31 +872,40 @@ Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *ne
 
 + (instancetype)removeMutationWithObjects:(NSArray *)objects indexes:(NSIndexSet *)indexes
 {
-    return [self mutationWithType:kRZDBArrayMutationTypeRemove objects:objects indexes:indexes];
+    RZDBArrayMutation *mutation = [[self alloc] init];
+    mutation.mutationType = kRZDBArrayMutationTypeRemove;
+    mutation.objects = objects;
+    mutation.indexes = indexes;
+
+    return mutation;
 }
 
 + (instancetype)insertMutationWithObjects:(NSArray *)objects indexes:(NSIndexSet *)indexes
 {
-    return [self mutationWithType:kRZDBArrayMutationTypeInsert objects:objects indexes:indexes];
+    RZDBArrayMutation *mutation = [[self alloc] init];
+    mutation.mutationType = kRZDBArrayMutationTypeInsert;
+    mutation.objects = objects;
+    mutation.indexes = indexes;
+
+    return mutation;
 }
 
-+ (instancetype)moveMutationWithIndexes:(NSIndexSet *)indexes
++ (instancetype)moveMutationFromIndex:(NSUInteger)fromIdx toIndex:(NSUInteger)toIdx
 {
-    return [self mutationWithType:kRZDBArrayMutationTypeMove objects:nil indexes:indexes];
+    NSUInteger indexes[2] = {fromIdx, toIdx};
+    NSIndexPath *movePath = [NSIndexPath indexPathWithIndexes:indexes length:2];
+
+    RZDBArrayMutation *mutation = [[self alloc] init];
+    mutation.mutationType = kRZDBArrayMutationTypeMove;
+    mutation.movePath = movePath;
+
+    return mutation;
 }
 
 + (instancetype)updateMutationWithIndexes:(NSIndexSet *)indexes
 {
-    return [self mutationWithType:kRZDBArrayMutationTypeUpdate objects:nil indexes:indexes];
-}
-
-#pragma mark - private methods
-
-+ (instancetype)mutationWithType:(RZDBArrayMutationType)type objects:(NSArray *)objects indexes:(NSIndexSet *)indexes
-{
     RZDBArrayMutation *mutation = [[self alloc] init];
-    mutation.mutationType = type;
-    mutation.objects = objects;
+    mutation.mutationType = kRZDBArrayMutationTypeUpdate;
     mutation.indexes = indexes;
 
     return mutation;

@@ -38,10 +38,6 @@ OBJC_EXTERN NSString* const kRZDBObjectUpdateKey;
 @protocol RZDBArrayObserver <NSObject>
 
 @optional
-- (void)array:(NSArray *)array willRemoveObjectsAtIndexes:(NSIndexSet *)indexes;
-- (void)array:(NSArray *)array willInsertObjects:(NSArray *)objects atIndexes:(NSIndexSet *)indexes;
-- (void)array:(NSArray *)array willMoveObjectAtIndex:(NSUInteger)oldIndex toIndex:(NSUInteger)newIndex;
-
 - (void)array:(NSArray *)array didRemoveObjects:(NSArray *)objects atIndexes:(NSIndexSet *)indexes;
 - (void)array:(NSArray *)array didInsertObjectsAtIndexes:(NSIndexSet *)indexes;
 - (void)array:(NSArray *)array didMoveObjectAtIndex:(NSUInteger)oldIndex toIndex:(NSUInteger)newIndex;
@@ -59,8 +55,8 @@ OBJC_EXTERN NSString* const kRZDBObjectUpdateKey;
 
 - (void)rz_sendUpdateNotificationForObject:(id)object;
 
-- (void)rz_beginBatchUpdates;
-- (void)rz_endBatchUpdates:(BOOL)force;
+- (void)rz_openBatchUpdate;
+- (void)rz_closeBatchUpdate;
 
 @end
 
