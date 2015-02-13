@@ -154,11 +154,7 @@ typedef void (^RZDBCollectionViewUpdateBlock)(void);
                         if ( finished ) {
                             self.batchUpdates = nil;
                             
-                            [self.postBatchUpdates enumerateObjectsUsingBlock:^(RZDBCollectionViewUpdateBlock updateBlock, NSUInteger idx, BOOL *stop) {
-                                updateBlock();
-                            }];
-                            
-                            self.postBatchUpdates = nil;
+                            [self runPostBatchUpdates];
                             
                             if ( self.reloadAfterAnimation ) {
                                 [self.collectionView reloadData];
@@ -166,9 +162,14 @@ typedef void (^RZDBCollectionViewUpdateBlock)(void);
                         }
                     }];
                 }
+                else {
+                    [self runPostBatchUpdates];
+                }
             }
             else {
                 self.batchUpdates = nil;
+                [self runPostBatchUpdates];
+
                 [self.collectionView reloadData];
             }
         }
@@ -204,6 +205,15 @@ typedef void (^RZDBCollectionViewUpdateBlock)(void);
     else {
         updateBlock();
     }
+}
+
+- (void)runPostBatchUpdates
+{
+    [self.postBatchUpdates enumerateObjectsUsingBlock:^(RZDBCollectionViewUpdateBlock updateBlock, NSUInteger idx, BOOL *stop) {
+        updateBlock();
+    }];
+
+    self.postBatchUpdates = nil;
 }
 
 #pragma mark - UICollectionViewDataSource
