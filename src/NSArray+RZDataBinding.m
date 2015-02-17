@@ -47,9 +47,7 @@ static NSString* const kRZDBDynamicClassPrefix = @"__RZDB";
 
 static void* const kRZDBBatchUpdateNumKey = (void *)&kRZDBBatchUpdateNumKey;
 
-// prototype to silence warnings
-struct objc_super _rz_super(id obj);
-struct objc_super _rz_super(id obj)
+static struct objc_super _rz_super(id obj)
 {
     return (struct objc_super){
         obj,
@@ -57,9 +55,7 @@ struct objc_super _rz_super(id obj)
     };
 }
 
-// prototype to silence warnings
-Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *newName);
-Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *newName)
+static Class _rz_class_copyTemplate(Class template, Class newSuperclass, const char *newName)
 {
     // NOTE: assuming templates don't have ivars or properties (since they wouldn't be allocated for existing instances)
     
