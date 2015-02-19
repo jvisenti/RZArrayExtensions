@@ -457,15 +457,6 @@ static Class _rz_class_copyTemplate(Class template, Class newSuperclass, const c
                 NSUInteger remIdx = [[self _rz_preBatchObjects] indexOfObjectIdenticalTo:self[idx]];
 
                 if ( remIdx != NSNotFound ) {
-                    // adjust previous remove indexes accordingly
-                    [removes enumerateRangesUsingBlock:^(NSRange range, BOOL *stop) {
-                        if ( NSLocationInRange(remIdx, range) ) {
-                            [removes shiftIndexesStartingAtIndex:range.location by:1];
-                            [removes shiftIndexesStartingAtIndex:NSMaxRange(range) + 1 by:-1];
-                            *stop = YES;
-                        }
-                    }];
-
                     [removes addIndex:remIdx];
                 }
             }
