@@ -369,7 +369,7 @@ static Class _rz_class_copyTemplate(Class template, Class newSuperclass, const c
                         NSUInteger oldIdx = [mutation.movePath indexAtPosition:0];
                         NSUInteger newIdx = [mutation.movePath indexAtPosition:1];
 
-                        if ( oldIdx != NSNotFound && oldIdx != newIdx ) {
+                        if ( oldIdx != NSNotFound ) {
                             [observer array:self didMoveObjectAtIndex:oldIdx toIndex:newIdx];
                         }
                     }
