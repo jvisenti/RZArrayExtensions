@@ -657,7 +657,7 @@ static Class _rz_class_copyTemplate(Class template, Class newSuperclass, const c
 
 - (void)replaceObjectsInRange:(NSRange)range withObjectsFromArray:(NSArray *)otherArray
 {
-    [self replaceObjectsAtIndexes:[NSIndexSet indexSetWithIndexesInRange:range] withObjects:otherArray];
+    [self replaceObjectsInRange:range withObjectsFromArray:otherArray range:NSMakeRange(0, otherArray.count)];
 }
 
 - (void)replaceObjectsInRange:(NSRange)range withObjectsFromArray:(NSArray *)otherArray range:(NSRange)otherRange
@@ -665,20 +665,19 @@ static Class _rz_class_copyTemplate(Class template, Class newSuperclass, const c
     [self rz_openBatchUpdate];
 
     NSRange replaceRange = NSMakeRange(range.location, MIN(range.length, otherRange.length));
-    NSRange replacementRange = NSMakeRange(otherRange.location, replaceRange.length);
 
-    [self replaceObjectsInRange:replaceRange withObjectsFromArray:[otherArray subarrayWithRange:replacementRange]];
+    NSRange removeRange = NSMakeRange(range.location, MAX(range.length, otherRange.length));
+    NSUInteger maxLen = MAX(0, (NSInteger)self.count - replaceRange.location);
+    removeRange.length = MIN(removeRange.length, maxLen);
 
-    if ( replaceRange.length < range.length ) {
-        NSRange removeRange = NSMakeRange(range.location + replaceRange.length, range.length - replaceRange.length);
+    NSRange insertRange = NSMakeRange(range.location, otherRange.length);
 
+    if ( removeRange.length > 0 ) {
         [self removeObjectsInRange:removeRange];
     }
-    else if ( replaceRange.length < otherRange.length ) {
-        NSRange insertRange = NSMakeRange(NSMaxRange(replaceRange), otherRange.length - replaceRange.length);
-        NSRange insertingRange = NSMakeRange(otherRange.location + replaceRange.length, insertRange.length);
 
-        [self insertObjects:[otherArray subarrayWithRange:insertingRange] atIndexes:[NSIndexSet indexSetWithIndexesInRange:insertRange]];
+    if ( insertRange.length > 0 ) {
+        [self insertObjects:[otherArray subarrayWithRange:otherRange] atIndexes:[NSIndexSet indexSetWithIndexesInRange:insertRange]];
     }
 
     [self rz_closeBatchUpdate];
