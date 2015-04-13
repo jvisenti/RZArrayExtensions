@@ -27,25 +27,21 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-@import Foundation;
+#import <Foundation/Foundation.h>
 
-typedef NS_ENUM(NSUInteger, RZDBArrayMutationType) {
-    kRZDBArrayMutationTypeUnknown   = 0,
-    kRZDBArrayMutationTypeRemove,
-    kRZDBArrayMutationTypeInsert,
-    kRZDBArrayMutationTypeMove, // only used internally
-    kRZDBArrayMutationTypeUpdate
-};
+#import "NSObject+RZDataBinding.h"
+
+OBJC_EXTERN NSString* const kRZDBObjectUpdateKey;
+
+#define RZDB_AUTOMATIC_UDPATES RZDB_AUTOMATIC_CLEANUP
 
 @protocol RZDBArrayObserver <NSObject>
 
-@required
-- (void)array:(NSArray *)array didChangeContents:(RZDBArrayMutationType)mutationType atIndexes:(NSIndexSet *)indexes;
-- (void)array:(NSArray *)array didMoveObjectAtIndex:(NSUInteger)oldIndex toIndex:(NSUInteger)newIndex;
-
 @optional
-- (void)array:(NSArray *)array willChangeContents:(RZDBArrayMutationType)mutationType atIndexes:(NSIndexSet *)indexes;
-- (void)array:(NSArray *)array willMoveObjectAtIndex:(NSUInteger)oldIndex toIndex:(NSUInteger)newIndex;
+- (void)array:(NSArray *)array didRemoveObjects:(NSArray *)objects atIndexes:(NSIndexSet *)indexes;
+- (void)array:(NSArray *)array didInsertObjectsAtIndexes:(NSIndexSet *)indexes;
+- (void)array:(NSArray *)array didMoveObjectAtIndex:(NSUInteger)oldIndex toIndex:(NSUInteger)newIndex;
+- (void)array:(NSArray *)array didUpdateObjectsAtIndexes:(NSIndexSet *)indexes;
 
 - (void)arrayWillBeginBatchUpdates:(NSArray *)array;
 - (void)arrayDidEndBatchUpdates:(NSArray *)array;
@@ -57,12 +53,10 @@ typedef NS_ENUM(NSUInteger, RZDBArrayMutationType) {
 - (void)rz_addObserver:(id<RZDBArrayObserver>)observer;
 - (void)rz_removeObserver:(id<RZDBArrayObserver>)observer;
 
-- (void)rz_registerForObjectUpdateNotificationsNamed:(NSArray *)names;
-- (void)rz_unregisterForObjectUpdateNotificationsNamed:(NSArray *)names;
-- (void)rz_unregisterForAllObjectUpdateNotifications;
+- (void)rz_sendUpdateNotificationForObject:(id)object;
 
-- (void)rz_beginBatchUpdates;
-- (void)rz_endBatchUpdates:(BOOL)force;
+- (void)rz_openBatchUpdate;
+- (void)rz_closeBatchUpdate;
 
 @end
 

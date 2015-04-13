@@ -154,11 +154,7 @@ typedef void (^RZDBCollectionViewUpdateBlock)(void);
                         if ( finished ) {
                             self.batchUpdates = nil;
                             
-                            [self.postBatchUpdates enumerateObjectsUsingBlock:^(RZDBCollectionViewUpdateBlock updateBlock, NSUInteger idx, BOOL *stop) {
-                                updateBlock();
-                            }];
-                            
-                            self.postBatchUpdates = nil;
+                            [self runPostBatchUpdates];
                             
                             if ( self.reloadAfterAnimation ) {
                                 [self.collectionView reloadData];
@@ -166,13 +162,58 @@ typedef void (^RZDBCollectionViewUpdateBlock)(void);
                         }
                     }];
                 }
+                else {
+                    [self runPostBatchUpdates];
+                }
             }
             else {
                 self.batchUpdates = nil;
+                [self runPostBatchUpdates];
+
                 [self.collectionView reloadData];
             }
         }
     }
+}
+
+- (NSArray *)indexPathsFromIndexSet:(NSIndexSet *)indexes
+{
+    NSMutableArray *indexPaths = [NSMutableArray arrayWithCapacity:indexes.count];
+
+    [indexes enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL *stop) {
+        NSIndexPath *indexPath = [NSIndexPath indexPathForItem:idx inSection:0];
+        [indexPaths addObject:indexPath];
+    }];
+
+    return indexPaths;
+}
+
+- (void)runUpdateBlock:(RZDBCollectionViewUpdateBlock)updateBlock postBatchUpdates:(BOOL)postBatch
+{
+    if ( self.collectionView.window == nil ) {
+        return;
+    }
+
+    if ( self.batchUpdating ) {
+        if ( postBatch ) {
+            [self.postBatchUpdates addObject:[updateBlock copy]];
+        }
+        else {
+            [self.batchUpdates addObject:[updateBlock copy]];
+        }
+    }
+    else {
+        updateBlock();
+    }
+}
+
+- (void)runPostBatchUpdates
+{
+    [self.postBatchUpdates enumerateObjectsUsingBlock:^(RZDBCollectionViewUpdateBlock updateBlock, NSUInteger idx, BOOL *stop) {
+        updateBlock();
+    }];
+
+    self.postBatchUpdates = nil;
 }
 
 #pragma mark - UICollectionViewDataSource
@@ -240,62 +281,32 @@ typedef void (^RZDBCollectionViewUpdateBlock)(void);
     self.batchUpdating = YES;
 }
 
-- (void)array:(NSArray *)array didChangeContents:(RZDBArrayMutationType)mutationType atIndexes:(NSIndexSet *)indexes
+- (void)array:(NSArray *)array didRemoveObjects:(NSArray *)objects atIndexes:(NSIndexSet *)indexes
 {
-    if ( self.collectionView.window == nil ) {
-        return;
-    }
-    
-    NSMutableArray *indexPaths = [NSMutableArray arrayWithCapacity:indexes.count];
-    
-    [indexes enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL *stop) {
-        NSIndexPath *indexPath = [NSIndexPath indexPathForItem:idx inSection:0];
-        [indexPaths addObject:indexPath];
-    }];
-
     if ( self.animateCollectionViewChanges ) {
-        if ( mutationType == kRZDBArrayMutationTypeUpdate ) {
-            RZDBCollectionViewUpdateBlock updateBlock = ^{
-                [indexPaths enumerateObjectsUsingBlock:^(NSIndexPath *indexPath, NSUInteger idx, BOOL *stop) {
-                    UICollectionViewCell *cell = [self.collectionView cellForItemAtIndexPath:indexPath];
-                    
-                    if ( cell != nil ) {
-                        id object = self.backingArray[indexPath.item];
-                        [self.delegate collectionView:self.collectionView updateCell:cell forObject:object atIndexPath:indexPath];
-                    }
-                }];
-            };
-            
-            if ( self.batchUpdating ) {
-                [self.postBatchUpdates addObject:[updateBlock copy]];
-            }
-            else {
-                updateBlock();
-            }
-        }
-        else {
-            RZDBCollectionViewUpdateBlock updateBlock = ^{
-                switch ( mutationType ) {
-                    case kRZDBArrayMutationTypeInsert:
-                        [self.collectionView insertItemsAtIndexPaths:indexPaths];
-                        break;
-                        
-                    case kRZDBArrayMutationTypeRemove:
-                        [self.collectionView deleteItemsAtIndexPaths:indexPaths];
-                        break;
-                        
-                    default:
-                        break;
-                }
-            };
-            
-            if ( self.batchUpdating ) {
-                [self.batchUpdates addObject:[updateBlock copy]];
-            }
-            else {
-                updateBlock();
-            }
-        }
+        NSArray *indexPaths = [self indexPathsFromIndexSet:indexes];
+
+        RZDBCollectionViewUpdateBlock updateBlock = ^{
+            [self.collectionView deleteItemsAtIndexPaths:indexPaths];
+        };
+
+        [self runUpdateBlock:updateBlock postBatchUpdates:NO];
+    }
+    else if ( !self.batchUpdating ) {
+        [self.collectionView reloadData];
+    }
+}
+
+- (void)array:(NSArray *)array didInsertObjectsAtIndexes:(NSIndexSet *)indexes
+{
+    if ( self.animateCollectionViewChanges ) {
+        NSArray *indexPaths = [self indexPathsFromIndexSet:indexes];
+
+        RZDBCollectionViewUpdateBlock updateBlock = ^{
+            [self.collectionView insertItemsAtIndexPaths:indexPaths];
+        };
+
+        [self runUpdateBlock:updateBlock postBatchUpdates:NO];
     }
     else if ( !self.batchUpdating ) {
         [self.collectionView reloadData];
@@ -304,24 +315,38 @@ typedef void (^RZDBCollectionViewUpdateBlock)(void);
 
 - (void)array:(NSArray *)array didMoveObjectAtIndex:(NSUInteger)oldIndex toIndex:(NSUInteger)newIndex
 {
-    if ( self.collectionView.window == nil ) {
-        return;
-    }
-    
     if ( self.animateCollectionViewChanges ) {
         NSIndexPath *oldPath = [NSIndexPath indexPathForItem:oldIndex inSection:0];
         NSIndexPath *newPath = [NSIndexPath indexPathForItem:newIndex inSection:0];
-        
+
         RZDBCollectionViewUpdateBlock updateBlock = ^{
             [self.collectionView moveItemAtIndexPath:oldPath toIndexPath:newPath];
         };
-        
-        if ( self.batchUpdating ) {
-            [self.batchUpdates addObject:[updateBlock copy]];
-        }
-        else {
-            updateBlock();
-        }
+
+        [self runUpdateBlock:updateBlock postBatchUpdates:NO];
+    }
+    else if ( !self.batchUpdating ) {
+        [self.collectionView reloadData];
+    }
+}
+
+- (void)array:(NSArray *)array didUpdateObjectsAtIndexes:(NSIndexSet *)indexes
+{
+    if ( self.animateCollectionViewChanges ) {
+        NSArray *indexPaths = [self indexPathsFromIndexSet:indexes];
+
+        RZDBCollectionViewUpdateBlock updateBlock = ^{
+            [indexPaths enumerateObjectsUsingBlock:^(NSIndexPath *indexPath, NSUInteger idx, BOOL *stop) {
+                UICollectionViewCell *cell = [self.collectionView cellForItemAtIndexPath:indexPath];
+
+                if ( cell != nil ) {
+                    id object = self.backingArray[indexPath.item];
+                    [self.delegate collectionView:self.collectionView updateCell:cell forObject:object atIndexPath:indexPath];
+                }
+            }];
+        };
+
+        [self runUpdateBlock:updateBlock postBatchUpdates:YES];
     }
     else if ( !self.batchUpdating ) {
         [self.collectionView reloadData];
