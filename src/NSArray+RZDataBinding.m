@@ -31,6 +31,7 @@
 #import <objc/message.h>
 
 #import "NSArray+RZDataBinding.h"
+#import "RZDBMacros.h"
 
 NSString* const kRZDBObjectUpdateKey = @"RZDBObjectUpdateKey";
 
