@@ -115,7 +115,7 @@ static Class _rz_class_copyTemplate(Class template, Class newSuperclass, const c
 
 @interface NSArray (RZDataBinding_Private)
 
-- (NSPointerArray *)_rz_arrayObservers;
+- (NSHashTable *)_rz_arrayObservers;
 
 #pragma mark - automatic updates
 
@@ -153,37 +153,31 @@ static Class _rz_class_copyTemplate(Class template, Class newSuperclass, const c
 {
     NSParameterAssert(observer);
     
-    NSPointerArray *observers = [self _rz_arrayObservers];
-    [observers compact];
-    
-    NSUInteger obsIdx = [[observers allObjects] indexOfObjectIdenticalTo:observer];
-    
-    if ( obsIdx == NSNotFound ) {
-        if ( [observers count] == 0 ) {
+    NSHashTable *observers = [self _rz_arrayObservers];
+
+    if ( ![observers containsObject:observer] ) {
+        if ( observers.count == 0 ) {
             [self enumerateObjectsUsingBlock:^(id obj, NSUInteger idx, BOOL *stop) {
                 [self _rz_observeObject:obj];
             }];
         }
 
-        [observers addPointer:(__bridge void *)(observer)];
+        [observers addObject:observer];
     }
 }
 
 - (void)rz_removeObserver:(id<RZDBArrayObserver>)observer
 {
-    NSPointerArray *observers = [self _rz_arrayObservers];
-    [observers compact];
+    NSHashTable *observers = [self _rz_arrayObservers];
     
-    NSUInteger obsIdx = [[observers allObjects] indexOfObjectIdenticalTo:observer];
-    
-    if ( obsIdx != NSNotFound ) {
-        if ( [observers count] == 1 ) {
+    if ( [observers containsObject:observer] ) {
+        if ( observers.count == 1 ) {
             [self enumerateObjectsUsingBlock:^(id obj, NSUInteger idx, BOOL *stop) {
                 [self _rz_unobserveObject:obj force:YES];
             }];
         }
 
-        [observers removePointerAtIndex:obsIdx];
+        [observers removeObject:observer];
     }
 }
 
@@ -264,12 +258,12 @@ static Class _rz_class_copyTemplate(Class template, Class newSuperclass, const c
 
 @implementation NSArray (RZDataBinding_Private)
 
-- (NSPointerArray *)_rz_arrayObservers
+- (NSHashTable *)_rz_arrayObservers
 {
-    NSPointerArray *observers = objc_getAssociatedObject(self, _cmd);
+    NSHashTable *observers = objc_getAssociatedObject(self, _cmd);
     
     if ( observers == nil ) {
-        observers = [NSPointerArray pointerArrayWithOptions:(NSPointerFunctionsWeakMemory | NSPointerFunctionsObjectPointerPersonality)];
+        observers = [NSHashTable weakObjectsHashTable];
         objc_setAssociatedObject(self, _cmd, observers, OBJC_ASSOCIATION_RETAIN);
     }
     
@@ -323,10 +317,9 @@ static Class _rz_class_copyTemplate(Class template, Class newSuperclass, const c
 
 - (void)_rz_notifyObserversOfBatchUpdate:(BOOL)batchUpdating
 {
-    NSPointerArray *observers = [self _rz_arrayObservers];
-    
-    [observers compact];
-    [[observers allObjects] enumerateObjectsUsingBlock:^(id<RZDBArrayObserver> obs, NSUInteger idx, BOOL *stop) {
+    NSHashTable *observers = [self _rz_arrayObservers];
+
+    [observers.allObjects enumerateObjectsUsingBlock:^(id<RZDBArrayObserver> obs, NSUInteger idx, BOOL *stop) {
         if ( batchUpdating && [obs respondsToSelector:@selector(arrayWillBeginBatchUpdates:)] ) {
             [obs arrayWillBeginBatchUpdates:self];
         }
@@ -346,10 +339,9 @@ static Class _rz_class_copyTemplate(Class template, Class newSuperclass, const c
 - (void)_rz_didMutate:(RZDBArrayMutation *)mutation
 {
     if ( ![self _rz_isBatchUpdating] ) {
-        NSPointerArray *observers = [self _rz_arrayObservers];
-        [observers compact];
+        NSHashTable *observers = [self _rz_arrayObservers];
         
-        [[observers allObjects] enumerateObjectsUsingBlock:^(id<RZDBArrayObserver> observer, NSUInteger idx, BOOL *stop) {
+        [observers.allObjects enumerateObjectsUsingBlock:^(id<RZDBArrayObserver> observer, NSUInteger idx, BOOL *stop) {
             switch ( mutation.mutationType ) {
                 case kRZDBArrayMutationTypeRemove: {
                     if ( [observer respondsToSelector:@selector(array:didRemoveObjects:atIndexes:)] ) {
