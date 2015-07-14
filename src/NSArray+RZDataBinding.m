@@ -586,7 +586,7 @@ static Class _rz_class_copyTemplate(Class template, Class newSuperclass, const c
     [indexes enumerateRangesUsingBlock:^(NSRange range, BOOL *stop) {
         range.location -= numRemoved;
         [self _rz_removeObjectsInRangeSilently:range];
-        numRemoved = range.length;
+        numRemoved += range.length;
     }];
 
     [self _rz_didMutate:mutation];
