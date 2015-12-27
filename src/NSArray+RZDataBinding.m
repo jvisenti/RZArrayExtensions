@@ -539,7 +539,7 @@ static Class _rz_class_copyTemplate(Class template, Class newSuperclass, const c
 
         [self _rz_unobserveObject:obj force:NO];
 
-        range.length--;
+        --range.length;
     }
 }
 
@@ -657,10 +657,8 @@ static Class _rz_class_copyTemplate(Class template, Class newSuperclass, const c
 {
     [self rz_openBatchUpdate];
 
-    NSRange replaceRange = NSMakeRange(range.location, MIN(range.length, otherRange.length));
-
     NSRange removeRange = NSMakeRange(range.location, MAX(range.length, otherRange.length));
-    NSUInteger maxLen = MAX(0, (NSInteger)self.count - replaceRange.location);
+    NSUInteger maxLen = MAX(0, (NSInteger)self.count - range.location);
     removeRange.length = MIN(removeRange.length, maxLen);
 
     NSRange insertRange = NSMakeRange(range.location, otherRange.length);
